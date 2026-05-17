@@ -52,6 +52,7 @@ namespace ValheimHighCap.Patches.Phase2
         private static int   s_cycleCount;
         private static int   s_lastLoggedTotal;
         private static int   s_lastLoggedDirty;
+        private static float s_lastLogTime;
         private static bool  s_disabled;
 
         private readonly struct RevSnapshot
@@ -136,15 +137,21 @@ namespace ValheimHighCap.Patches.Phase2
                 s_dirty = s_scratchDirty;
                 s_scratchDirty = tmp;
 
-                // Periodic diagnostics — every ~5 s (100 cycles @ 50 ms).
+                // Periodic diagnostics — gated by Phase2.DirtyTracking.VerboseLogging,
+                // emitted every Phase2.DirtyTracking.LogIntervalSeconds.
                 s_cycleCount++;
-                if (s_cycleCount % 100 == 0)
+                if (HighCapConfig.DirtyTrackingVerboseLogging.Value)
                 {
-                    s_lastLoggedTotal = objectsByID.Count;
-                    s_lastLoggedDirty = s_dirty.Count;
-                    HighCapPlugin.Log.LogInfo(
-                        $"[DirtyZdoTracker] cycle={s_cycleCount} totalZdos={s_lastLoggedTotal} " +
-                        $"dirty={s_lastLoggedDirty} cached={s_lastSeen.Count}");
+                    float now = UnityEngine.Time.realtimeSinceStartup;
+                    if (now - s_lastLogTime >= HighCapConfig.DirtyTrackingLogIntervalSeconds.Value)
+                    {
+                        s_lastLogTime     = now;
+                        s_lastLoggedTotal = objectsByID.Count;
+                        s_lastLoggedDirty = s_dirty.Count;
+                        HighCapPlugin.Log.LogInfo(
+                            $"[DirtyZdoTracker] cycle={s_cycleCount} totalZdos={s_lastLoggedTotal} " +
+                            $"dirty={s_lastLoggedDirty} cached={s_lastSeen.Count}");
+                    }
                 }
             }
             catch (Exception ex)

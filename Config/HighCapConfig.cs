@@ -58,6 +58,12 @@ namespace ValheimHighCap
         /// </summary>
         public static ConfigEntry<int> DirtyTrackingMinKnownZdos = null!;
 
+        /// <summary>Log periodic dirty-tracker sweep statistics.</summary>
+        public static ConfigEntry<bool> DirtyTrackingVerboseLogging = null!;
+
+        /// <summary>How often to emit the dirty-tracker stats line (seconds).</summary>
+        public static ConfigEntry<float> DirtyTrackingLogIntervalSeconds = null!;
+
         /// <summary>
         /// Filter ZDO-targeted broadcast RPCs (damage numbers, hit effects, status changes)
         /// to only peers within SpatialRpcRadius. Reduces broadcast fan-out from O(N) to
@@ -160,6 +166,18 @@ namespace ValheimHighCap
                     "Minimum acknowledged ZDOs before dirty-tracking activates for a peer. " +
                     "Peers below this threshold use the full sector scan (initial world load).",
                     new AcceptableValueRange<int>(1, 5_000)));
+
+            DirtyTrackingVerboseLogging = cfg.Bind(
+                "Phase2.DirtyTracking", "VerboseLogging", false,
+                "Emit a periodic '[DirtyZdoTracker] cycle=...' line with sweep statistics. " +
+                "Useful for debugging; leave off in production.");
+
+            DirtyTrackingLogIntervalSeconds = cfg.Bind(
+                "Phase2.DirtyTracking", "LogIntervalSeconds", 60f,
+                new ConfigDescription(
+                    "Interval between dirty-tracker stat log lines (seconds). " +
+                    "Only used when VerboseLogging = true.",
+                    new AcceptableValueRange<float>(1f, 3600f)));
 
             EnableSpatialRpc = cfg.Bind(
                 "Phase2.SpatialRpc", "Enable", true,
