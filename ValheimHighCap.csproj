@@ -1,0 +1,73 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <AssemblyName>ValheimHighCap</AssemblyName>
+    <RootNamespace>ValheimHighCap</RootNamespace>
+    <Version>1.0.0</Version>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>latest</LangVersion>
+    <!-- Suppress XML doc warnings for referenced game types -->
+    <NoWarn>1591</NoWarn>
+  </PropertyGroup>
+
+  <!--
+    GAME PATH RESOLUTION (in priority order):
+      1. Environment variable  VALHEIM_SERVER_DIR
+      2. Local override        Directory.Build.props  <GameDir>…</GameDir>
+      3. Common Windows Steam path
+      4. Common Linux Steam path
+
+    Example: set VALHEIM_SERVER_DIR=D:\servers\valheim
+  -->
+  <PropertyGroup>
+    <GameDir Condition="'$(VALHEIM_SERVER_DIR)' != ''">$(VALHEIM_SERVER_DIR)</GameDir>
+    <GameDir Condition="'$(GameDir)' == '' AND Exists('C:\Program Files (x86)\Steam\steamapps\common\Valheim dedicated server')">C:\Program Files (x86)\Steam\steamapps\common\Valheim dedicated server</GameDir>
+    <GameDir Condition="'$(GameDir)' == '' AND Exists('/home/steam/steamapps/common/Valheim dedicated server')">/home/steam/steamapps/common/Valheim dedicated server</GameDir>
+    <ManagedDir>$(GameDir)\valheim_server_Data\Managed</ManagedDir>
+    <BepInExDir>$(GameDir)\BepInEx</BepInExDir>
+  </PropertyGroup>
+
+  <!-- BepInEx 5 + HarmonyX via NuGet -->
+  <ItemGroup>
+    <PackageReference Include="BepInEx.Analyzers"       Version="1.*"      PrivateAssets="all" />
+    <PackageReference Include="BepInEx.Core"            Version="5.4.21"   PrivateAssets="all" />
+    <PackageReference Include="BepInEx.PluginInfoProps" Version="2.1.0"    PrivateAssets="all" />
+    <!-- Unity stubs for IntelliSense only; don't copy to output -->
+    <PackageReference Include="UnityEngine.Modules"     Version="2021.*"    PrivateAssets="all" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+  <!-- Game assemblies (populated once GameDir is resolved) -->
+  <ItemGroup Condition="'$(GameDir)' != ''">
+    <Reference Include="assembly_valheim">
+      <HintPath>$(ManagedDir)\assembly_valheim.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="assembly_utils">
+      <HintPath>$(ManagedDir)\assembly_utils.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="com.rlabrecque.steamworks.net">
+      <HintPath>$(ManagedDir)\com.rlabrecque.steamworks.net.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(ManagedDir)\UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(ManagedDir)\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Post-build: copy output DLL into BepInEx plugins folder if available -->
+  <Target Name="DeployToBepInEx" AfterTargets="Build" Condition="'$(BepInExDir)' != '' AND Exists('$(BepInExDir)')">
+    <Copy SourceFiles="$(OutputPath)$(AssemblyName).dll"
+          DestinationFolder="$(BepInExDir)\plugins\$(AssemblyName)"
+          SkipUnchangedFiles="true" />
+    <Message Text="[ValheimHighCap] Deployed to $(BepInExDir)\plugins\$(AssemblyName)" Importance="high" />
+  </Target>
+
+</Project>
