@@ -71,6 +71,10 @@ namespace ValheimHighCap.Patches.Phase1
             {
                 if (sendTimer > HighCapConfig.SendIntervalSeconds.Value)
                 {
+                    // New cycle begins — snapshot dirty ZDOs for Phase 2.
+                    if (HighCapConfig.EnableDirtyTracking.Value)
+                        DirtyZdoTracker.BeginCycle();
+
                     s_nextPeer .SetValue(__instance, 0);
                     s_sendTimer.SetValue(__instance, 0f);
                 }
