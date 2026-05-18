@@ -37,11 +37,17 @@ namespace ValheimHighCap.Patches.Phase2
         private static readonly Dictionary<ZDOID, RevSnapshot> s_lastSeen =
             new Dictionary<ZDOID, RevSnapshot>(8192);
 
-        // ZDOs whose revisions changed in the most recent sweep.
-        private static HashSet<ZDOID> s_dirty = new HashSet<ZDOID>(1024);
+        // Sticky dirty map: ZDOID -> remaining cycles before this entry expires.
+        // When a ZDO changes, its entry is (re)set to StickyCycles. Each cycle,
+        // every entry's countdown decrements; entries that hit 0 are removed.
+        // This guarantees that every peer in the round-robin rotation
+        // (ceil(MaxPlayers / PeersPerFrame) cycles per pass) sees the dirty mark
+        // at least once before it disappears — otherwise peers serviced on a
+        // slower rotation than the change cadence silently desync.
+        private static Dictionary<ZDOID, int> s_dirty = new Dictionary<ZDOID, int>(1024);
 
-        // Reusable scratch sets — avoid per-cycle allocation.
-        private static HashSet<ZDOID> s_scratchDirty = new HashSet<ZDOID>(1024);
+        // Reusable scratch list for entries that hit 0 this cycle.
+        private static readonly List<ZDOID> s_expireBuf = new List<ZDOID>(256);
         private static readonly List<ZDOID> s_removeBuf = new List<ZDOID>(256);
 
         // Reflection handle to ZDOMan.m_objectsByID — resolved lazily on first sweep
@@ -94,9 +100,26 @@ namespace ValheimHighCap.Patches.Phase2
                     (Dictionary<ZDOID, ZDO>)s_objectsByIDField.GetValue(zdoMan);
                 if (objectsByID == null) return;
 
-                // Build the new dirty set into the scratch buffer, then swap.
-                s_scratchDirty.Clear();
+                int stickyCycles = HighCapConfig.DirtyTrackingStickyCycles.Value;
 
+                // 1) Decrement all existing sticky entries; collect expired ones.
+                //    (Done first so newly-dirtied ZDOs in step 2 don't get decremented.)
+                s_expireBuf.Clear();
+                foreach (var kv in s_dirty)
+                {
+                    int remaining = kv.Value - 1;
+                    if (remaining <= 0) s_expireBuf.Add(kv.Key);
+                }
+                foreach (var id in s_expireBuf) s_dirty.Remove(id);
+
+                // Mutate values in-place by re-iterating keys. (Can't mutate
+                // dictionary values during foreach, so copy keys to scratch.)
+                s_removeBuf.Clear();
+                foreach (var kv in s_dirty) s_removeBuf.Add(kv.Key);
+                foreach (var id in s_removeBuf) s_dirty[id] = s_dirty[id] - 1;
+
+                // 2) Sweep all live ZDOs; (re)set sticky for any whose revisions
+                //    changed since the previous snapshot, and update the snapshot.
                 foreach (var kv in objectsByID)
                 {
                     ZDOID id = kv.Key;
@@ -109,19 +132,19 @@ namespace ValheimHighCap.Patches.Phase2
                     {
                         if (curData != prev.Data || curOwner != prev.Owner)
                         {
-                            s_scratchDirty.Add(id);
+                            s_dirty[id] = stickyCycles;
                             s_lastSeen[id] = new RevSnapshot(curData, curOwner);
                         }
                     }
                     else
                     {
                         // First time we see this ZDO → treat as dirty so it gets sent.
-                        s_scratchDirty.Add(id);
+                        s_dirty[id] = stickyCycles;
                         s_lastSeen[id] = new RevSnapshot(curData, curOwner);
                     }
                 }
 
-                // Drop cached entries for ZDOs that no longer exist (destroyed).
+                // 3) Drop snapshot cache entries for ZDOs that no longer exist (destroyed).
                 if (s_lastSeen.Count > objectsByID.Count + 256)
                 {
                     s_removeBuf.Clear();
@@ -129,13 +152,11 @@ namespace ValheimHighCap.Patches.Phase2
                         if (!objectsByID.ContainsKey(id))
                             s_removeBuf.Add(id);
                     foreach (var id in s_removeBuf)
+                    {
                         s_lastSeen.Remove(id);
+                        s_dirty.Remove(id);
+                    }
                 }
-
-                // Swap scratch → live dirty set.
-                var tmp = s_dirty;
-                s_dirty = s_scratchDirty;
-                s_scratchDirty = tmp;
 
                 // Periodic diagnostics — gated by Phase2.DirtyTracking.VerboseLogging,
                 // emitted every Phase2.DirtyTracking.LogIntervalSeconds.
@@ -171,14 +192,11 @@ namespace ValheimHighCap.Patches.Phase2
                 $"[DirtyZdoTracker] DISABLING sweep: {reason}");
         }
 
-        /// <summary>True if the ZDO changed (or is new) since the previous cycle.</summary>
-        public static bool IsDirty(ZDOID id) => s_dirty.Contains(id);
+        /// <summary>True if the ZDO changed within the last StickyCycles cycles.</summary>
+        public static bool IsDirty(ZDOID id) => s_dirty.ContainsKey(id);
 
-        /// <summary>Size of the dirty set produced by the most recent <see cref="BeginCycle"/>.</summary>
+        /// <summary>Size of the dirty set (count of ZDOs currently within their sticky window).</summary>
         public static int LiveCount => s_dirty.Count;
-
-        /// <summary>The dirty ZDO set from the most recent cycle. Stable for the duration of the cycle.</summary>
-        public static HashSet<ZDOID> CycleSnapshot => s_dirty;
     }
 }
 

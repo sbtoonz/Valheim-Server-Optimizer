@@ -65,6 +65,16 @@ namespace ValheimHighCap
         public static ConfigEntry<float> DirtyTrackingLogIntervalSeconds = null!;
 
         /// <summary>
+        /// Number of consecutive send cycles a ZDO stays in the dirty set after
+        /// changing. MUST be ≥ ceil(MaxPlayers / PeersPerFrame) + safety margin,
+        /// otherwise peers serviced on a slower rotation than the change cadence
+        /// will miss updates and silently desync (chests don't open, doors don't
+        /// toggle, item pickups don't reflect). Default 16 = safe for 64 players
+        /// at PeersPerFrame=6 (full rotation ≈ 11 cycles).
+        /// </summary>
+        public static ConfigEntry<int> DirtyTrackingStickyCycles = null!;
+
+        /// <summary>
         /// Filter ZDO-targeted broadcast RPCs (damage numbers, hit effects, status changes)
         /// to only peers within SpatialRpcRadius. Reduces broadcast fan-out from O(N) to
         /// O(peers_in_range). Recommended for servers where players spread across the map.
@@ -76,6 +86,18 @@ namespace ValheimHighCap
         /// 64 u ≈ 1 zone, 192 u ≈ 3 zones. Combat is rarely visible past 200 u.
         /// </summary>
         public static ConfigEntry<float> SpatialRpcRadius = null!;
+
+        // ── Phase 3 ──────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Replace <c>ZPackage.Write(ZPackage)</c> with a no-copy variant that
+        /// streams the inner package's internal MemoryStream buffer directly
+        /// into the outer package instead of calling <c>GetArray()</c> (which
+        /// allocates a fresh byte[] and memcpys the entire buffer on every call).
+        /// At 64 players this saves ~10–20 MB/sec of GC allocation. Pure managed
+        /// code — no native interop. Auto-disables on any reflection mismatch.
+        /// </summary>
+        public static ConfigEntry<bool> EnableZPackageFastWrite = null!;
 
         // ── Metrics ──────────────────────────────────────────────────────────
 
@@ -172,6 +194,16 @@ namespace ValheimHighCap
                 "Emit a periodic '[DirtyZdoTracker] cycle=...' line with sweep statistics. " +
                 "Useful for debugging; leave off in production.");
 
+            DirtyTrackingStickyCycles = cfg.Bind(
+                "Phase2.DirtyTracking", "StickyCycles", 16,
+                new ConfigDescription(
+                    "Number of cycles a changed ZDO stays in the dirty set so every peer in " +
+                    "the round-robin rotation gets at least one chance to receive the update. " +
+                    "Must be ≥ ceil(MaxPlayers / PeersPerFrame). Too low → missed updates " +
+                    "(chest doesn't open, door doesn't toggle). Too high → more dirty entries " +
+                    "per cycle (cheap, harmless).",
+                    new AcceptableValueRange<int>(1, 256)));
+
             DirtyTrackingLogIntervalSeconds = cfg.Bind(
                 "Phase2.DirtyTracking", "LogIntervalSeconds", 60f,
                 new ConfigDescription(
@@ -180,9 +212,12 @@ namespace ValheimHighCap
                     new AcceptableValueRange<float>(1f, 3600f)));
 
             EnableSpatialRpc = cfg.Bind(
-                "Phase2.SpatialRpc", "Enable", true,
-                "Cull ZDO-targeted broadcast RPCs to peers within SpatialRpcRadius. " +
-                "Reduces RPC fan-out from O(N) to O(nearby_peers).");
+                "Phase2.SpatialRpc", "Enable", false,
+                "Spatially cull known-cosmetic broadcast RPCs (damage numbers, hit effects, " +
+                "footsteps) to peers within SpatialRpcRadius. Uses a blacklist approach: " +
+                "only explicitly listed cosmetic RPCs get culled, all other RPCs pass through " +
+                "to all peers unchanged. Safe to enable — does NOT affect gameplay interactions " +
+                "(doors, chests, pickups, damage). Reduces cosmetic RPC fan-out at scale.");
 
             SpatialRpcRadius = cfg.Bind(
                 "Phase2.SpatialRpc", "RadiusUnits", 192f,
@@ -190,6 +225,16 @@ namespace ValheimHighCap
                     "World-space radius for spatial RPC culling (Unity units). " +
                     "192 ≈ 3 zones. Increase for large-scale siege/pvp scenarios.",
                     new AcceptableValueRange<float>(64f, 640f)));
+
+            // Phase 3
+            EnableZPackageFastWrite = cfg.Bind(
+                "Phase3.ZPackageFastWrite", "Enable", false,
+                "EXPERIMENTAL — disabled by default. " +
+                "Replace ZPackage.Write(ZPackage) GetArray()+memcpy with a direct " +
+                "stream-to-stream write using MemoryStream.GetBuffer(). On paper " +
+                "writes byte-identical wire format, but empirically observed to break " +
+                "client interaction RPCs (door open, item pickup, chest use) — root " +
+                "cause unknown. Leave OFF unless investigating.");
 
             // Phase 1 — Adaptive
             SendIntervalSeconds = cfg.Bind(
