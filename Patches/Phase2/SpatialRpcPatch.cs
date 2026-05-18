@@ -50,26 +50,30 @@ namespace ValheimHighCap.Patches.Phase2
         private static HashSet<int> BuildBlacklist()
         {
             var set = new HashSet<int>();
+
+            // ── ONLY add RPCs that meet ALL of these criteria: ───────────────
+            //   1. Sent via m_nview.InvokeRPC(ZNetView.Everybody, ...) — broadcast with ZDO target
+            //   2. Purely cosmetic — no gameplay state depends on receiving this
+            //   3. High-volume — worth culling for perf at scale
+            //
+            // When in doubt, do NOT add. A leaked cosmetic RPC costs ~200 bytes
+            // per distant peer. A dropped gameplay RPC breaks interactions.
+            // ─────────────────────────────────────────────────────────────────
+
             string[] names =
             {
-                // ── Damage / combat visuals ──────────────────────────────────
-                "DamageText",          // floating damage numbers
-                "Stagger",             // stagger visual sync
-                "AddNoise",            // AI noise radius (visual aggro indicator)
-                "Alert",               // AI alert state visual
+                // FootStep.cs:240,255 — footstep sound sync.
+                // Purely audio/visual. No gameplay state. Very high volume
+                // (~2/sec/player = 200/sec at 100 players).
+                "Step",
 
-                // ── Hit / impact effects ─────────────────────────────────────
-                "Hit",                 // melee hit effect
-                "OnHit",               // projectile hit effect
-                "Poke",                // stab hit feedback
+                // PrivateArea.cs:552,561 — ward protection flash VFX.
+                // Purely visual feedback when a ward blocks an action.
+                "FlashShield",
 
-                // ── Movement / footstep effects ──────────────────────────────
-                "Step",                // footstep sync
-                "Step2",               // alternate footstep
-
-                // ── Status effect visuals ────────────────────────────────────
-                "FlashShield",         // shield flash VFX
-                "ResetCloth",          // cloth physics reset (visual only)
+                // Character.cs:3716 — cloth physics reset.
+                // Purely visual cloth simulation reset. No gameplay impact.
+                "RPC_ResetCloth",
             };
             foreach (string n in names)
                 set.Add(n.GetStableHashCode());
